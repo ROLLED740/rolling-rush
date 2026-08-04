@@ -15,7 +15,7 @@ self-contained HTML5 game. Live, playable, monetized-ready.
 - **Roadmap artifact:** https://claude.ai/code/artifact/71ea21a2-392d-4200-9cf7-a37f20a47fe0
 - **Playable demo artifact:** https://claude.ai/code/artifact/10f2145a-fd8b-49f1-ae50-9dc82da18c5a
 
-## Current version: v15
+## Current version: v15.1
 
 ### Gameplay
 - Drag to steer; drag up = accelerate, down = brake (arrows/WASD on keyboard)
@@ -36,14 +36,18 @@ self-contained HTML5 game. Live, playable, monetized-ready.
 - All textures drawn procedurally on canvas at runtime — zero image assets
 
 ### Economy
-- Coins from pickups + 1 per 100 m survived
+- Coins from pickups + 1 per 60 m survived
+- **Coin tiers:** bronze 1 (safe lines) - silver 3 (lane bordering a hole) -
+  gem 6 (airborne: mid-jump over a gap, or a loop's apex). Gem heights are
+  parked onto the ball's real trajectory at launch/loop-entry. The Coin Magnet
+  ignores airborne gems on purpose.
 - Shop: skins 30–400 coins; boosts Head Start 15, Shield 25, Coin Doubler 20, Slow-Mo 18
 - Boosts armed via ON/OFF chips on **start screen and game-over screen**
 - **Continue the run (v15):** dying offers a revive that keeps your distance,
   level and run coins. 50 banked coins, **doubling each continue in the same
   run** (cap 5). 10-second countdown ring auto-declines.
 - **Permanent upgrades (v15):** 5 branches, bought once, never expire —
-  **22,000 coins to max**. Coin Magnet, Boost Duration, Shield Slots,
+  **8,000 coins to max** (~150 runs for a strong player). Coin Magnet, Boost Duration, Shield Slots,
   Running Start, Revive Discount. Levels sync across devices.
 - Coin packs wired to Stripe but **not yet enabled** (no payment links configured)
 
@@ -97,7 +101,8 @@ bundle contains `$&` sequences that would otherwise corrupt the output.
 
 ## Not done yet
 
-- **Stripe coin packs** — needs 3 Payment Links (with `coins` metadata) in `config.js`
+- **Stripe coin packs** — the plan of record (the itch.io tip button is itch's
+  own PayPal flow and needs nothing from this codebase). Needs 3 Payment Links (with `coins` metadata) in `config.js`
   and the `stripe-webhook` edge function deployed. Full walkthrough in `SETUP-CLOUD.md`.
 - **YouTube Playables** — interest form submitted, awaiting approval (months-long).
   Playables **bans third-party payments**; coin packs already auto-hide there.
