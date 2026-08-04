@@ -121,6 +121,10 @@
     overflow-x: auto;
     padding: 6px 12px 10px;
     scrollbar-width: thin;
+    /* Never let the column flex parents squeeze this row: it scrolls
+       horizontally, so any vertical shrink clips the chips away entirely
+       and leaves a bare scrollbar where the skins should be. */
+    flex: 0 0 auto;
   }
   .ball-chip {
     flex: 0 0 auto;
@@ -197,6 +201,36 @@
   .boost-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .boost-info small { opacity: .7; font-size: 12px; line-height: 1.3; }
   .boost-buy { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+  .btn:disabled { opacity: .55; cursor: default; box-shadow: none; }
+
+  /* Upgrade level pips — filled bars show how far a branch is bought up. */
+  .pips { display: flex; gap: 4px; margin-top: 5px; }
+  .pip {
+    width: 18px; height: 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.22);
+  }
+  .pip.on { background: #ffd23e; box-shadow: 0 0 6px rgba(255,210,62,.6); }
+
+  /* Continue-the-run countdown: a conic ring that drains to empty. */
+  #revive-ring {
+    --pct: 1;
+    position: relative;
+    width: 104px; height: 104px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    background: conic-gradient(#ffd23e calc(var(--pct) * 360deg), rgba(255,255,255,.16) 0);
+  }
+  #revive-ring::after {
+    content: "";
+    position: absolute; inset: 9px;
+    border-radius: 50%;
+    background: #241247;
+  }
+  #revive-count {
+    position: relative; z-index: 1;
+    font-size: 38px; font-weight: 800; color: #fff;
+  }
 
   .pack-row { display: flex; gap: 10px; width: 100%; }
   .pack-card {
@@ -323,7 +357,15 @@
     "@supabase/supabase-js": "./vendor/supabase.module.js"
   } }
 </script>
-<!-- YouTube Playables SDK: only resolves inside the YouTube environment; harmless elsewhere -->
+<!-- The Playables SDK nulls window.localStorage and window.sessionStorage inside
+     ANY iframe (it forces games onto its own save API). itch.io embeds the game
+     in an iframe, so that silently destroyed every save there. Capture a live
+     reference to the Storage object BEFORE the SDK loads — nulling the window
+     property does not invalidate a reference already held. -->
+<script>try { window.__rrStore = window.localStorage; } catch (e) { window.__rrStore = null; }</script>
+<!-- YouTube Playables SDK. Note it self-installs on any origin and reports
+     IN_PLAYABLES_ENV=true in any frame, so the shim verifies a real YouTube
+     ancestor before trusting it. -->
 <script src="https://www.youtube.com/game_api/v1" defer onerror="void 0"></script>
 </head>
 <body>
@@ -404,12 +446,23 @@
     <div class="ball-row" id="ball-row-shop"></div>
     <div class="shop-section">Boosts — arm them on the start screen</div>
     <div id="boost-list" style="width:100%; display:flex; flex-direction:column; gap:8px;"></div>
+    <div class="shop-section">Permanent Upgrades — bought once, never expire</div>
+    <div id="upgrade-list" style="width:100%; display:flex; flex-direction:column; gap:8px;"></div>
     <div id="packs-section" style="width:100%">
       <div class="shop-section">Coin Packs</div>
       <div class="pack-row" id="pack-list"></div>
     </div>
     <button class="btn" id="btn-shop-close">DONE</button>
   </div>
+</div>
+
+<div class="screen hidden" id="screen-revive">
+  <h2>💗 Continue?</h2>
+  <p class="stats" id="revive-stats"></p>
+  <div id="revive-ring"><span id="revive-count">10</span></div>
+  <button class="btn" id="btn-revive-yes">CONTINUE · ● <span id="revive-price">50</span></button>
+  <button class="btn ghost" id="btn-revive-no">END RUN</button>
+  <p class="hint">Bank: ● <span id="revive-bank">0</span> coins · each continue costs double</p>
 </div>
 
 <div class="screen hidden" id="screen-pause">

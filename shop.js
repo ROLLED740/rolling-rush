@@ -3,6 +3,7 @@
 
 import { BALLS, ballThumb } from './balls.js';
 import { paymentsEnabled, COIN_PACKS, purchasePack } from './payments.js';
+import { UPGRADES, maxLevel, levelOf, nextCost } from './upgrades.js';
 
 export const BOOSTS = [
   { id: 'headstart', icon: '🚀', name: 'Head Start', desc: 'Begin the run 150 m in, already up to speed', price: 15 },
@@ -31,7 +32,77 @@ function refreshChips() {
     const countEl = $(`boost-count-${b.id}`);
     if (countEl) countEl.textContent = `×${ctx.save.boosts[b.id] || 0}`;
   }
+  refreshUpgrades();
   refreshArmRow();
+}
+
+// --- Permanent upgrades ----------------------------------------------------
+
+function refreshUpgrades() {
+  for (const u of UPGRADES) {
+    const lvl = levelOf(ctx.save, u.id);
+    const cost = nextCost(ctx.save, u.id);
+    const maxed = cost === null;
+
+    const effectEl = $(`up-effect-${u.id}`);
+    if (effectEl) effectEl.textContent = u.effect(lvl);
+
+    const pipsEl = $(`up-pips-${u.id}`);
+    if (pipsEl) {
+      pipsEl.querySelectorAll('.pip').forEach((pip, i) => {
+        pip.classList.toggle('on', i < lvl);
+      });
+    }
+
+    const btn = $(`up-buy-${u.id}`);
+    if (btn) {
+      btn.textContent = maxed ? 'MAX' : `● ${cost.toLocaleString()}`;
+      btn.disabled = maxed;
+      btn.classList.toggle('ghost', maxed);
+    }
+  }
+}
+
+function buyUpgrade(id) {
+  const u = UPGRADES.find((x) => x.id === id);
+  if (!u) return;
+  const cost = nextCost(ctx.save, id);
+  if (cost === null) return;                       // already maxed
+
+  if ((ctx.save.coins || 0) < cost) {
+    ctx.sfxDeny();
+    ctx.showToast(`Need ${(cost - (ctx.save.coins || 0)).toLocaleString()} more coins`);
+    refreshChips();
+    return;
+  }
+  ctx.save.coins -= cost;
+  ctx.save.upgrades[id] = levelOf(ctx.save, id) + 1;
+  ctx.persist();
+  ctx.sfxBuy();
+  const lvl = levelOf(ctx.save, id);
+  ctx.showToast(`${u.icon} ${u.name} Lv ${lvl}${lvl === maxLevel(u) ? ' — MAX!' : ''}`);
+  refreshChips();
+}
+
+function buildUpgrades() {
+  const list = $('upgrade-list');
+  if (!list) return;
+  for (const u of UPGRADES) {
+    const card = document.createElement('div');
+    card.className = 'boost-card';
+    const pips = Array.from({ length: maxLevel(u) }, () => '<span class="pip"></span>').join('');
+    card.innerHTML =
+      `<div class="boost-icon">${u.icon}</div>` +
+      `<div class="boost-info"><b>${u.name}</b>` +
+      `<small id="up-effect-${u.id}"></small>` +
+      `<div class="pips" id="up-pips-${u.id}">${pips}</div></div>` +
+      `<div class="boost-buy"><button class="btn mini" id="up-buy-${u.id}" data-upgrade="${u.id}"></button></div>`;
+    list.appendChild(card);
+  }
+  list.addEventListener('click', (e) => {
+    const id = e.target?.dataset?.upgrade;
+    if (id) buyUpgrade(id);
+  });
 }
 
 function onChipTap(def) {
@@ -193,11 +264,13 @@ export function initShop(context) {
   ctx = context;
   ctx.save.owned ||= ['sunset'];
   ctx.save.boosts ||= {};
+  ctx.save.upgrades ||= {};
   if (ctx.save.ball && !ctx.save.owned.includes(ctx.save.ball)) {
     ctx.save.owned.push(ctx.save.ball);   // grandfather pre-shop players
   }
   buildBallRows();
   buildBoosts();
+  buildUpgrades();
   buildCoinPacks();
   let shopReturn = 'start';
   const openShop = (from) => () => { shopReturn = from; ctx.showScreen('shop'); refreshChips(); };
