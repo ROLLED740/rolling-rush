@@ -22,12 +22,19 @@ function mergeSaves(a, b) {
   for (const k of new Set([...Object.keys(a.boosts || {}), ...Object.keys(b.boosts || {})])) {
     boosts[k] = Math.max(a.boosts?.[k] || 0, b.boosts?.[k] || 0);
   }
+  // Permanent upgrades merge the same way: keep the highest level seen on
+  // either device, so a sync can never demote a branch you already bought.
+  const upgrades = {};
+  for (const k of new Set([...Object.keys(a.upgrades || {}), ...Object.keys(b.upgrades || {})])) {
+    upgrades[k] = Math.max(a.upgrades?.[k] || 0, b.upgrades?.[k] || 0);
+  }
   return {
     best: Math.max(a.best || 0, b.best || 0),
     coins: Math.max(a.coins || 0, b.coins || 0),
     ball: b.ball || a.ball,
     owned: [...new Set([...(a.owned || []), ...(b.owned || [])])],
     boosts,
+    upgrades,
   };
 }
 

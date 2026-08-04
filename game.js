@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import {
   firstFrameReady, gameReady, sendScore,
-  loadSave, saveSave, onSystemPause,
+  loadSave, saveSave, onSystemPause, inYouTube, sdkReady,
 } from './ytgame-shim.js';
 import { BALLS } from './balls.js';
 import { THEMES, matFor } from './themes.js';
 import { initShop, consumeArmedBoosts, refreshShop } from './shop.js';
 import { initCloud, cloudPush } from './cloud.js';
+import { UPGRADES, maxLevel, upgradeEffects } from './upgrades.js';
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -28,6 +29,11 @@ const RAMP_H = 1.2;                  // ramp rise over one segment
 const LOOP_R = 2.3;                  // loop-the-loop radius
 const GROUND_Y = -10;
 const DEATH_Y = -9;
+
+const BOOST_BASE = 1.3;              // seconds of boost-pad burst at upgrade Lv 0
+const MAX_REVIVES = 5;               // hard cap; the doubling price limits it anyway
+const REVIVE_SECONDS = 10;           // countdown before the offer expires
+const REVIVE_GRACE = 1.4;            // seconds of invulnerability after continuing
 
 // Dev/test helpers: ?levellen=80 shortens levels, ?start=1200 starts mid-run.
 const PARAMS = new URLSearchParams(location.search);
@@ -451,7 +457,7 @@ const sfxLevel = () => { beep(523, 784, 0.15, 'square', 0.07); setTimeout(() => 
 // ---------------------------------------------------------------------------
 // Game state
 // ---------------------------------------------------------------------------
-const S = { MENU: 0, PLAYING: 1, OVER: 2, PAUSED: 3 };
+const S = { MENU: 0, PLAYING: 1, OVER: 2, PAUSED: 3, REVIVE: 4 };
 let state = S.MENU;
 let stateBeforePause = S.MENU;
 let speed = SPEED_START;
@@ -465,9 +471,20 @@ let level = 1;
 let coinsRun = 0;
 let coinValue = 1;          // 2 with the Coin Doubler boost
 let shieldCharges = 0;
+let graceTimer = 0;         // brief invulnerability after a shield/revive respawn
 let perk = '';              // equipped ball's perk: '', 'flame', 'wings'
 let slowmoTimer = 0;        // seconds of slow-motion remaining (Slow-Mo boost)
 let save = { best: 0, coins: 0, ball: BALLS[0].id };
+
+// Permanent-upgrade effects, resolved once per run in startRun().
+let up = upgradeEffects(save);
+let magnetRadius = 0;
+let boostSeconds = BOOST_BASE;
+
+// "Continue the run": each continue within a run costs double the last.
+let revivesThisRun = 0;
+let reviveTimer = 0;        // interval id for the countdown
+let reviveDeadline = 0;
 
 const $ = (id) => document.getElementById(id);
 const hudDist = $('hud-dist'), hudCoins = $('hud-coins'), hudLevel = $('hud-level');
@@ -483,6 +500,7 @@ function showToast(text) {
 const screens = {
   start: $('screen-start'), over: $('screen-over'), pause: $('screen-pause'),
   shop: $('screen-shop'), account: $('screen-account'), leaderboard: $('screen-leaderboard'),
+  revive: $('screen-revive'),
 };
 
 function persist() {
@@ -505,10 +523,19 @@ function applyLevel(newLevel, quiet = false) {
 
 function startRun() {
   const boosts = consumeArmedBoosts();
+  // Permanent upgrades are re-read here so a purchase made on the game-over
+  // screen takes effect on the very next run.
+  up = upgradeEffects(save);
+  magnetRadius = up.magnetRadius;
+  boostSeconds = BOOST_BASE + up.boostBonus;
+  revivesThisRun = 0;
+  graceTimer = 0;
+
   const adminDist = ADMIN ? (adminStartLevel - 1) * LEVEL_LEN : 0;
-  const startDist = DEV_START + adminDist + (boosts.headstart ? 150 : 0);
+  // The Running Start upgrade stacks on top of the consumable Head Start boost.
+  const startDist = DEV_START + adminDist + (boosts.headstart ? 150 : 0) + up.runStartM;
   coinValue = (boosts.doubler ? 2 : 1) + (perk === 'flame' ? 1 : 0);
-  shieldCharges = boosts.shield ? 1 : 0;
+  shieldCharges = (boosts.shield ? 1 : 0) + up.shieldSlots;
   slowmoTimer = boosts.slowmo ? 8 : 0;
   ballZ = -startDist;
   ballX = 0; slipX = 0; ballY = BALL_R; velY = 0;
@@ -526,9 +553,9 @@ function startRun() {
   sfxGo();
 }
 
-async function endRun() {
+async function endRun(playSfx = true) {
   state = S.OVER;
-  sfxFall();
+  if (playSfx) sfxFall();
   const dist = Math.floor(-ballZ);
   const distBonus = Math.floor(dist / 100);   // +1 coin per 100 m survived
   const earned = coinsRun + distBonus;
@@ -547,10 +574,9 @@ async function endRun() {
   if (DEMO) setTimeout(startRun, 1500);
 }
 
-// Shield boost: instead of dying, get dropped back onto the next safe segment.
-function shieldRespawn() {
-  shieldCharges--;
-  showToast('🛡️ Shield saved you!');
+// Drop the ball back onto the next fully-solid segment ahead, keeping the run
+// alive. Shared by the Shield boost and by "continue the run".
+function respawnOnSafeGround() {
   let idx = Math.floor(-ballZ / SEG_LEN) + 2;
   ensureTrack(idx);
   while (true) {
@@ -565,7 +591,80 @@ function shieldRespawn() {
   velY = 0;
   grounded = false;
   fellSfx = false;
+  loop = null;                 // a respawn cancels any loop-the-loop in progress
   lastSegIndex = idx;
+  // Sweep boulders out of the landing zone: respawning on top of one was an
+  // unavoidable second death.
+  for (let i = boulders.length - 1; i >= 0; i--) {
+    if (Math.abs(boulders[i].position.z - ballZ) < 18) {
+      scene.remove(boulders[i]);
+      boulders.splice(i, 1);
+    }
+  }
+  graceTimer = REVIVE_GRACE;
+}
+
+// Shield boost: instead of dying, get dropped back onto the next safe segment.
+function shieldRespawn() {
+  shieldCharges--;
+  showToast(`🛡️ Shield saved you!${shieldCharges > 0 ? ` (${shieldCharges} left)` : ''}`);
+  respawnOnSafeGround();
+}
+
+// --- Continue the run ------------------------------------------------------
+// Each continue within the same run costs double the previous one, so the
+// offer stays tempting early and self-limits late.
+
+function revivePrice() {
+  return up.reviveBase * (2 ** revivesThisRun);
+}
+
+function canRevive() {
+  return !DEMO && revivesThisRun < MAX_REVIVES && (save.coins || 0) >= revivePrice();
+}
+
+function offerRevive() {
+  state = S.REVIVE;
+  sfxFall();
+  $('revive-stats').innerHTML =
+    `You fell at <b>${Math.floor(-ballZ)} m</b> · Level <b>${level}</b>` +
+    (revivesThisRun ? ` · continue #${revivesThisRun + 1}` : '');
+  $('revive-price').textContent = revivePrice().toLocaleString();
+  $('revive-bank').textContent = (save.coins || 0).toLocaleString();
+  showScreen('revive');
+  reviveDeadline = performance.now() + REVIVE_SECONDS * 1000;
+  clearInterval(reviveTimer);
+  tickRevive();
+  reviveTimer = setInterval(tickRevive, 100);
+}
+
+function tickRevive() {
+  const left = Math.max(0, reviveDeadline - performance.now());
+  $('revive-count').textContent = String(Math.ceil(left / 1000));
+  $('revive-ring').style.setProperty('--pct', String(left / (REVIVE_SECONDS * 1000)));
+  if (left <= 0) declineRevive();
+}
+
+function acceptRevive() {
+  if (state !== S.REVIVE) return;
+  const price = revivePrice();
+  if ((save.coins || 0) < price) { declineRevive(); return; }
+  clearInterval(reviveTimer);
+  save.coins -= price;
+  revivesThisRun++;
+  persist();
+  refreshShop();
+  respawnOnSafeGround();
+  showScreen('none');
+  state = S.PLAYING;
+  showToast(`💗 Continue ${revivesThisRun}!`);
+  sfxGo();
+}
+
+function declineRevive() {
+  clearInterval(reviveTimer);
+  if (state !== S.REVIVE) return;
+  endRun(false);               // the fall sound already played on the offer
 }
 
 function pauseGame() {
@@ -610,10 +709,12 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keyThrottle = 1;
   else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keyThrottle = -0.6;
   else if (e.key === ' ' || e.key === 'Enter') {
-    if (state === S.MENU || state === S.OVER) startRun();
+    if (state === S.REVIVE) acceptRevive();
+    else if (state === S.MENU || state === S.OVER) startRun();
     else if (state === S.PAUSED) resumeGame();
   } else if (e.key === 'Escape' || e.key === 'p') {
-    state === S.PAUSED ? resumeGame() : pauseGame();
+    if (state === S.REVIVE) declineRevive();
+    else state === S.PAUSED ? resumeGame() : pauseGame();
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -623,6 +724,8 @@ window.addEventListener('keyup', (e) => {
 
 $('btn-play').addEventListener('click', startRun);
 $('btn-retry').addEventListener('click', startRun);
+$('btn-revive-yes').addEventListener('click', acceptRevive);
+$('btn-revive-no').addEventListener('click', declineRevive);
 $('btn-resume').addEventListener('click', resumeGame);
 $('btn-pause').addEventListener('click', pauseGame);
 
@@ -643,6 +746,7 @@ let camX = 0, camZ = 7;
 
 function die() {
   if (shieldCharges > 0) shieldRespawn();
+  else if (canRevive()) offerRevive();
   else endRun();
 }
 
@@ -687,6 +791,9 @@ function step(dt) {
   const extra = Math.max(-0.6, Math.min(1, throttle + keyThrottle)) * 8
     + (boostTimer > 0 ? 11 : 0);
   const effSpeed = Math.max(4, speed + extra);
+
+  // Post-respawn invulnerability (shield or continue) ticks down in real time.
+  if (state === S.PLAYING && graceTimer > 0) graceTimer = Math.max(0, graceTimer - dt);
 
   // Slow-Mo boost: stretch simulated time for the opening seconds.
   if (state === S.PLAYING && slowmoTimer > 0) slowmoTimer = Math.max(0, slowmoTimer - dt);
@@ -787,7 +894,7 @@ function step(dt) {
         for (const pad of seg.pads) {
           if (!pad.hit && Math.abs(pad.x - slipX) < 1.05 && Math.abs(wz - ballZ) < 1.4) {
             pad.hit = true;
-            boostTimer = 1.3;
+            boostTimer = boostSeconds;       // extended by the Boost Duration upgrade
             sfxJump();
           }
         }
@@ -804,7 +911,7 @@ function step(dt) {
           continue;
         }
         const dx = b.position.x - slipX, dz = b.position.z - ballZ;
-        if (state === S.PLAYING && ballY < 1.4 && dx * dx + dz * dz < 0.9 * 0.9) {
+        if (state === S.PLAYING && graceTimer <= 0 && ballY < 1.4 && dx * dx + dz * dz < 0.9 * 0.9) {
           if (perk === 'flame') {          // flame ball torches boulders
             scene.remove(b);
             boulders.splice(i, 1);
@@ -819,14 +926,29 @@ function step(dt) {
 
       ball.rotation.x -= (effSpeed * dt) / BALL_R;
 
-      // Coin pickups near the ball.
-      for (const idx of [segIndex, segIndex + 1]) {
+      // Coin pickups near the ball. The magnet upgrade reaches further than one
+      // segment, so the scan window widens with it.
+      const magnetSpan = Math.ceil(magnetRadius / SEG_LEN);
+      for (let idx = segIndex - magnetSpan; idx <= segIndex + 1 + magnetSpan; idx++) {
         const s = segments.get(idx);
         if (!s || !s.coins.length) continue;
         for (const coin of s.coins) {
           if (!coin.visible) continue;
-          const wz = s.group.position.z + coin.position.z;
-          const dx = coin.position.x - slipX, dz = wz - ballZ;
+          let wz = s.group.position.z + coin.position.z;
+          let dx = coin.position.x - slipX, dz = wz - ballZ;
+
+          // Coin Magnet: drag coins inside the radius toward the ball. Moving
+          // the coin (rather than widening the pickup test) keeps the pull
+          // visible, and the normal pickup below then catches it.
+          if (magnetRadius > 0 && dx * dx + dz * dz < magnetRadius * magnetRadius) {
+            const pull = Math.min(1, dt * 7);
+            coin.position.x += (slipX - coin.position.x) * pull;
+            coin.position.z += ((ballZ - s.group.position.z) - coin.position.z) * pull;
+            wz = s.group.position.z + coin.position.z;
+            dx = coin.position.x - slipX;
+            dz = wz - ballZ;
+          }
+
           if (dx * dx + dz * dz < 0.65 * 0.65 && Math.abs(ballY - BALL_R) < 1) {
             coin.visible = false;
             coinsRun += coinValue;
@@ -915,6 +1037,10 @@ function loopFrame(t) {
 // Boot
 // ---------------------------------------------------------------------------
 (async () => {
+  // Must precede loadSave(): in the inlined dist build this code runs before
+  // the deferred Playables SDK, so without the wait we would read the wrong
+  // save store and mis-detect the YouTube environment.
+  await sdkReady();
   save = await loadSave();
   if (DEV_COINS) save.coins = Math.max(save.coins || 0, DEV_COINS);
   initShop({
@@ -925,7 +1051,7 @@ function loopFrame(t) {
     sfxBuy: sfxLevel,
     sfxDeny: () => beep(220, 140, 0.2, 'square', 0.08),
     showScreen,
-    isYouTube: typeof window.ytgame !== 'undefined',
+    isYouTube: inYouTube(),
   });
   initCloud({
     save,
@@ -958,6 +1084,7 @@ function enableAdmin() {
   save.owned = BALLS.map((b) => b.id);
   save.coins = Math.max(save.coins || 0, 999999);
   save.boosts = { headstart: 99, shield: 99, doubler: 99, slowmo: 99 };
+  save.upgrades = Object.fromEntries(UPGRADES.map((u) => [u.id, maxLevel(u)]));
   persist();
   refreshShop();
 
