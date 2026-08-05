@@ -1,5 +1,49 @@
 # Changelog
 
+## [v18] - 2026-08-04
+
+### Features
+
+- **Ball sizes.** Marble (r 0.28), Standard (0.42), Boulder (0.62) — a separate
+  axis from skins, so any skin rolls at any size. Marble steers faster but has
+  a shorter coin reach; Boulder smashes rolling boulders and rock piles (+8
+  coins) but is slow to steer and drops through a lone single-lane ledge.
+- **Two size-gated obstacles**, added because a size advantage needs something
+  to be an advantage *over*:
+  - **Low bars** — a red/white gate whose underside sits at 0.60 m. Only the
+    Marble (top of ball 0.56 m) clears it; Standard (0.84) and Boulder (1.24)
+    must change lane.
+  - **Rock piles** — the Boulder ploughs straight through for +8 coins;
+    everything else has to dodge.
+- **Nine power balls**, at the roadmap's prices: ⏰ Timewarp 600 (rewinds 3 s
+  once per run), 🧲 Magnet 450, 👻 Ghost 500 (phases 5 s after a hit),
+  💎 Diamond 550 (indestructible for 200 m), ⚡ Storm 700, 🌀 Portal 650
+  (teleports past holes and gaps), 🪙 Midas 800 (triple coins, no shields),
+  🌈 Prism 900 (world mechanics off), 🕳️ Void 1200 (the track never opens).
+- **Mystery crate**, 150 coins — always a cosmetic skin you don't own.
+
+### Design Rationale
+
+- **The crate is deliberately not a loot box.** No duplicates, and power balls
+  are excluded from the pool: a 150-coin crate must never be a cheaper route to
+  a 1,200-coin ball. That keeps it a discount rather than paid randomised
+  reward, which is what the roadmap's own note asks for.
+- **Storm gives 1.5× coins, not 1.5× distance.** Distance *is* the leaderboard
+  score here, so multiplying it would corrupt the rankings. The speed increase
+  raises distance honestly on its own.
+- Gem heights and the Timewarp rewind both work off real trajectory/state
+  rather than fixed values — `ensureTrack` now keeps 18 segments behind while
+  the Timewarp ball is equipped so the rewind lands on the original track.
+- `demoSteer` treats bars and rock piles as lane hazards, so `?demo` attract
+  mode and trailer capture don't walk straight into the new obstacles.
+
+### Notes & Caveats
+
+- `save.size` / `save.sizesOwned` are merged in `cloud.js` like every other
+  field — a sync can't demote them.
+- Ball geometry is still built once at the Standard radius; other sizes scale
+  the mesh, so there is no per-size geometry cost.
+
 ## [v15.1] - 2026-08-04
 
 ### Features

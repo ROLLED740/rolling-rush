@@ -15,7 +15,7 @@ self-contained HTML5 game. Live, playable, monetized-ready.
 - **Roadmap artifact:** https://claude.ai/code/artifact/71ea21a2-392d-4200-9cf7-a37f20a47fe0
 - **Playable demo artifact:** https://claude.ai/code/artifact/10f2145a-fd8b-49f1-ae50-9dc82da18c5a
 
-## Current version: v15.1
+## Current version: v18
 
 ### Gameplay
 - Drag to steer; drag up = accelerate, down = brake (arrows/WASD on keyboard)
@@ -26,7 +26,7 @@ self-contained HTML5 game. Live, playable, monetized-ready.
 - Snow & Ice are **slippery** (steering lags; Ice slides more than Snow)
 - Wood-plank track with hazard-striped rails; speed trail when boosting
 
-### Balls — 33 total
+### Balls — 42 total (33 skins + 9 power balls)
 - 5 gradients (Sunset free, Ocean, Candy, Lime, Galaxy)
 - Sports: soccer, basketball, tennis, bowling
 - Billiards: cue + balls 1–15
@@ -64,7 +64,8 @@ self-contained HTML5 game. Live, playable, monetized-ready.
 |---|---|
 | `index.html` | Page shell, HUD, all screens (start/over/pause/revive/shop/account/leaderboard) |
 | `game.js` | Track generation, physics, levels, boulders, wings, audio, revive flow, admin |
-| `balls.js` | All 33 procedural ball skins + picker thumbnails |
+| `balls.js` | All 42 procedural balls (33 skins + 9 power balls) + thumbnails |
+| `sizes.js` | Marble / Standard / Boulder radii and their trade-offs |
 | `themes.js` | The 8 world themes + scenery builders (`slippery` property on Snow/Ice) |
 | `shop.js` | Shop UI, boost arming, upgrade cards, coin packs |
 | `upgrades.js` | Permanent upgrade tree: definitions, costs, and `upgradeEffects()` |
