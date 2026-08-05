@@ -1,5 +1,32 @@
 # Changelog
 
+## [v15.1] - 2026-08-04
+
+### Features
+
+- **Coin tiers.** Payout now follows the risk of the spot:
+  bronze (1) on safe coin lines, **silver (3)** in a lane that survives but
+  borders a hole so you have to thread it, and **gems (6)** that are airborne —
+  only reachable mid-jump over a gap or at the apex of a loop.
+- Gem heights are parked onto the ball's **actual trajectory** at the moment of
+  launch (or loop entry), so a gem rewards committing to the jump rather than
+  guessing whether a hard-coded height matches your current speed.
+- The Coin Magnet deliberately ignores airborne gems; hoovering them off the
+  ground would erase the risk they are paid for.
+- Coin income buffed ~5x overall (denser lines, +1 per 60 m instead of per
+  100 m, plus the new tiers), and the upgrade tree cut from 22,000 to **8,000**.
+
+### Design Rationale
+
+- The original 22,000 came straight from the roadmap and was never checked
+  against real earnings. Measured over autopilot runs it was **10 coins/run,
+  i.e. ~2,200 runs to max** — a wall, not a sink, and unreachable on YouTube
+  where coin packs are banned outright. Now ~53 coins/run and ~150 runs to max
+  for a strong player; a typical run lands well short of that, so the tree is
+  still a long-term goal.
+- Coin pickup switched to true 3D distance. The old test required the ball to
+  be near ground level, which would have made every airborne gem uncollectable.
+
 ## [v15] - 2026-08-03
 
 ### Features

@@ -4,7 +4,8 @@
 // never expire. Levels live in save.upgrades = { id: level }. Every effect is
 // read through upgradeEffects() so the game never inspects levels directly.
 //
-// Total cost to max every branch: 22,000 coins.
+// Total cost to max every branch: 8,000 coins. (Was 22,000, which measured out
+// at ~2,200 runs to max against the real earn rate — a wall, not a sink.)
 
 // Effect tables are indexed by level, so index 0 is always the "unowned" value.
 const MAGNET_RADIUS = [0, 1.2, 2.0, 2.8, 3.6, 4.5];   // metres coins are pulled from
@@ -18,7 +19,7 @@ export const UPGRADES = [
     id: 'magnet',
     icon: '🧲',
     name: 'Coin Magnet',
-    costs: [150, 350, 800, 1600, 2600],               // 5,500 to max
+    costs: [60, 130, 300, 600, 910],                     // 2,000 to max
     effect: (lvl) => (lvl === 0
       ? 'Coins must be driven over'
       : `Pulls coins in from ${MAGNET_RADIUS[lvl].toFixed(1)} m away`),
@@ -27,14 +28,14 @@ export const UPGRADES = [
     id: 'boostdur',
     icon: '⚡',
     name: 'Boost Duration',
-    costs: [120, 300, 650, 1300, 2130],               // 4,500 to max
+    costs: [50, 110, 240, 480, 720],                     // 1,600 to max
     effect: (lvl) => `Boost pads last ${(1.3 + BOOST_BONUS[lvl]).toFixed(2)}s`,
   },
   {
     id: 'shieldslot',
     icon: '🛡️',
     name: 'Shield Slots',
-    costs: [500, 1400, 3100],                         // 5,000 to max
+    costs: [180, 500, 1120],                     // 1,800 to max
     effect: (lvl) => (lvl === 0
       ? 'No free shields — buy them as boosts'
       : `Start every run with ${lvl} free shield${lvl > 1 ? 's' : ''}`),
@@ -43,7 +44,7 @@ export const UPGRADES = [
     id: 'runstart',
     icon: '🚀',
     name: 'Running Start',
-    costs: [100, 250, 500, 1000, 1650],               // 3,500 to max
+    costs: [40, 90, 200, 400, 570],                     // 1,300 to max
     effect: (lvl) => (lvl === 0
       ? 'Runs begin at 0 m'
       : `Every run begins ${RUN_START_M[lvl]} m in`),
@@ -52,7 +53,7 @@ export const UPGRADES = [
     id: 'revive',
     icon: '💗',
     name: 'Revive Discount',
-    costs: [200, 500, 1100, 1700],                    // 3,500 to max
+    costs: [70, 180, 400, 650],                     // 1,300 to max
     effect: (lvl) => `First continue costs ${REVIVE_BASE[lvl]} coins`,
   },
 ];

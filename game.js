@@ -268,8 +268,42 @@ const boulderGeo = new THREE.SphereGeometry(0.55, 20, 14);
 const boulderMats = [0xb03a3a, 0x7d3c98, 0x2c3e50, 0xd35400, 0x148f77].map(
   (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.15 }),
 );
-const coinGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.09, 20);
-const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd23e, roughness: 0.25, metalness: 0.65 });
+// Coin tiers — payout scales with how dangerous the spot is.
+//   bronze  safe lane coin lines
+//   silver  a lane that survives but borders a hole: you must thread it
+//   gem     airborne, only reachable mid-jump over a gap or at a loop's apex
+const COIN_TIERS = {
+  bronze: {
+    value: 1,
+    geo: new THREE.CylinderGeometry(0.3, 0.3, 0.09, 20),
+    mat: new THREE.MeshStandardMaterial({ color: 0xffd23e, roughness: 0.25, metalness: 0.65 }),
+  },
+  silver: {
+    value: 3,
+    geo: new THREE.CylinderGeometry(0.37, 0.37, 0.1, 20),
+    mat: new THREE.MeshStandardMaterial({
+      color: 0xeaf2ff, roughness: 0.12, metalness: 0.9,
+      emissive: 0x5578b0, emissiveIntensity: 0.4,
+    }),
+  },
+  gem: {
+    value: 6,
+    geo: new THREE.OctahedronGeometry(0.44),
+    mat: new THREE.MeshStandardMaterial({
+      color: 0x3ce4ff, roughness: 0.05, metalness: 0.35,
+      emissive: 0x12a6c9, emissiveIntensity: 0.95,
+    }),
+  },
+};
+
+function addCoin(group, coins, x, y, tier) {
+  const mesh = new THREE.Mesh(tier.geo, tier.mat);
+  if (tier !== COIN_TIERS.gem) mesh.rotation.x = Math.PI / 2;   // discs face the player
+  mesh.position.set(x, y, 0);
+  mesh.userData = { value: tier.value, gem: tier === COIN_TIERS.gem };
+  group.add(mesh);
+  coins.push(mesh);
+}
 const rampLen = Math.hypot(SEG_LEN, RAMP_H);
 const rampGeo = new THREE.BoxGeometry(TRACK_W, 0.5, rampLen);
 // A thin torus stretched along its axis reads as a curled track ribbon.
@@ -291,6 +325,7 @@ let runStartSeg = 0;
 let safeLane = 1;
 let featureCooldown = 0;
 let upcoming = [];          // queued segment types for multi-segment features
+let gemForNextGap = false;  // one gem per ramp-and-gap sequence
 let coinRun = 0;
 let coinLane = 1;
 
@@ -308,7 +343,7 @@ function spawnSegment(i) {
     const pHole = Math.min(0.26 + meters / 1100, 0.5);
     const r = Math.random();
     if (r < pHole) type = 'holes';
-    else if (r < pHole + 0.11) { type = 'ramp'; upcoming = ['gap', 'gap', 'safe']; }
+    else if (r < pHole + 0.11) { type = 'ramp'; upcoming = ['gap', 'gap', 'safe']; gemForNextGap = true; }
     else if (r < pHole + 0.11 + LOOP_CHANCE && meters > 200) type = 'loop';
     if (type !== 'safe') featureCooldown = upcoming.length + 3;
   }
@@ -381,23 +416,37 @@ function spawnSegment(i) {
     boulders.push(boulder);
   }
 
-  // Coin lines appear on plain safe stretches.
+  // Coin placement. Safe stretches carry ordinary bronze lines; hazards carry
+  // the good stuff, so the payout follows the risk you actually take.
   const coins = [];
   if (type === 'safe' && i >= runStartSeg + SAFE_START_SEGMENTS) {
-    if (coinRun <= 0 && Math.random() < 0.22) {
-      coinRun = 3 + Math.floor(Math.random() * 3);
+    if (coinRun <= 0 && Math.random() < 0.30) {
+      coinRun = 4 + Math.floor(Math.random() * 4);
       coinLane = Math.random() < 0.6 ? safeLane : Math.floor(Math.random() * LANES);
     }
     if (coinRun > 0) {
-      const coin = new THREE.Mesh(coinGeo, coinMat);
-      coin.rotation.x = Math.PI / 2;
-      coin.position.set((coinLane - 1) * LANE_W, 0.55, 0);
-      group.add(coin);
-      coins.push(coin);
+      addCoin(group, coins, (coinLane - 1) * LANE_W, 0.55, COIN_TIERS.bronze);
       coinRun--;
     }
-  } else if (type !== 'safe') {
+  } else {
     coinRun = 0;
+    if (type === 'holes') {
+      // Silver goes in a lane that survives but borders a hole — worth 3, and
+      // you have to thread it instead of hugging the middle of the safe lane.
+      const risky = [0, 1, 2].filter((l) => !holes[l] && (holes[l - 1] || holes[l + 1]));
+      if (risky.length && Math.random() < 0.5) {
+        const lane = risky[Math.floor(Math.random() * risky.length)];
+        addCoin(group, coins, (lane - 1) * LANE_W, 0.55, COIN_TIERS.silver);
+      }
+    } else if (type === 'gap' && gemForNextGap) {
+      // One gem per ramp jump. Its height is re-parked onto the real flight
+      // arc at launch, so it rewards daring the jump, not guessing a height.
+      gemForNextGap = false;
+      addCoin(group, coins, 0, 2.5, COIN_TIERS.gem);
+    } else if (type === 'loop') {
+      // Re-parked onto the loop's apex the moment the ball enters it.
+      addCoin(group, coins, 0, BALL_R + LOOP_R * 2, COIN_TIERS.gem);
+    }
   }
 
   scene.add(group);
@@ -424,6 +473,7 @@ function resetTrack(startSeg) {
   safeLane = 1;
   featureCooldown = 0;
   upcoming = [];
+  gemForNextGap = false;
   coinRun = 0;
 }
 
@@ -449,6 +499,11 @@ function beep(freqFrom, freqTo, dur, type = 'sine', gain = 0.12) {
   } catch { /* audio is optional */ }
 }
 const sfxCoin = () => beep(880, 1500, 0.12, 'sine', 0.1);
+const sfxSilver = () => beep(1046, 1760, 0.14, 'sine', 0.11);
+const sfxGem = () => {
+  beep(1046, 1568, 0.12, 'triangle', 0.1);
+  setTimeout(() => beep(1568, 2093, 0.18, 'triangle', 0.09), 90);
+};
 const sfxFall = () => beep(320, 60, 0.6, 'sawtooth', 0.14);
 const sfxGo = () => beep(440, 880, 0.18, 'triangle', 0.1);
 const sfxJump = () => beep(300, 900, 0.25, 'triangle', 0.12);
@@ -557,7 +612,7 @@ async function endRun(playSfx = true) {
   state = S.OVER;
   if (playSfx) sfxFall();
   const dist = Math.floor(-ballZ);
-  const distBonus = Math.floor(dist / 100);   // +1 coin per 100 m survived
+  const distBonus = Math.floor(dist / 60);    // +1 coin per 60 m survived
   const earned = coinsRun + distBonus;
   const newBest = dist > (save.best || 0);
   save.best = Math.max(save.best || 0, dist);
@@ -744,6 +799,22 @@ function laneAt(x) {
 const UP = new THREE.Vector3(0, 1, 0);
 let camX = 0, camZ = 7;
 
+// Drop the gems in the upcoming gap onto the parabola the ball is about to
+// fly, so a gem is a reward for committing to the jump rather than a lottery
+// on whether the launch speed happened to match a hard-coded height.
+function parkGemsOnArc(fromSeg, y0, vy, vz) {
+  for (let k = 0; k <= 3; k++) {
+    const s = segments.get(fromSeg + k);
+    if (!s) continue;
+    for (const coin of s.coins) {
+      if (!coin.userData.gem) continue;
+      const wz = s.group.position.z + coin.position.z;
+      const t = (ballZ - wz) / Math.max(vz, 1);          // time until the ball reaches it
+      if (t > 0) coin.position.y = Math.max(1, y0 + vy * t - 0.5 * GRAVITY * t * t);
+    }
+  }
+}
+
 function die() {
   if (shieldCharges > 0) shieldRespawn();
   else if (canRevive()) offerRevive();
@@ -843,6 +914,7 @@ function step(dt) {
           speed = Math.min(SPEED_MAX, speed + 3);
           const range = 2 * SEG_LEN + 3;
           velY = Math.max(7, Math.min(17, (GRAVITY * range) / (2 * Math.max(effSpeed, speed))));
+          parkGemsOnArc(segIndex, ballY, velY, effSpeed);
           grounded = false;
           sfxJump();
         }
@@ -861,6 +933,12 @@ function step(dt) {
       if (seg && seg.type === 'loop' && grounded && !seg.loopDone && frac < 0.4) {
         seg.loopDone = true;
         loop = { theta: 0, z0: ballZ };
+        // Park the loop's gem on the apex of the circle we're about to trace.
+        for (const coin of seg.coins) {
+          if (!coin.userData.gem) continue;
+          coin.position.z = ballZ - seg.group.position.z;
+          coin.position.y = BALL_R + LOOP_R * 2;
+        }
         grounded = false;
         sfxJump();
       } else if (grounded) {
@@ -939,8 +1017,11 @@ function step(dt) {
 
           // Coin Magnet: drag coins inside the radius toward the ball. Moving
           // the coin (rather than widening the pickup test) keeps the pull
-          // visible, and the normal pickup below then catches it.
-          if (magnetRadius > 0 && dx * dx + dz * dz < magnetRadius * magnetRadius) {
+          // visible, and the normal pickup below then catches it. Airborne
+          // gems are exempt — hoovering those up would erase the risk they pay
+          // for.
+          if (magnetRadius > 0 && coin.position.y < 1.2
+              && dx * dx + dz * dz < magnetRadius * magnetRadius) {
             const pull = Math.min(1, dt * 7);
             coin.position.x += (slipX - coin.position.x) * pull;
             coin.position.z += ((ballZ - s.group.position.z) - coin.position.z) * pull;
@@ -949,10 +1030,17 @@ function step(dt) {
             dz = wz - ballZ;
           }
 
-          if (dx * dx + dz * dz < 0.65 * 0.65 && Math.abs(ballY - BALL_R) < 1) {
+          // True 3D distance: coins now sit at varying heights, so the old
+          // "ball must be near ground level" test would miss every gem.
+          const dy = coin.position.y - ballY;
+          const reach = coin.userData.gem ? 1.15 : 0.85;
+          if (dx * dx + dy * dy + dz * dz < reach * reach) {
             coin.visible = false;
-            coinsRun += coinValue;
-            sfxCoin();
+            const worth = coin.userData.value * coinValue;
+            coinsRun += worth;
+            if (coin.userData.gem) { sfxGem(); showToast(`💎 +${worth}`); }
+            else if (coin.userData.value > 1) sfxSilver();
+            else sfxCoin();
           }
         }
       }
