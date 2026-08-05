@@ -4,6 +4,7 @@
 import { BALLS, ballThumb } from './balls.js';
 import { paymentsEnabled, COIN_PACKS, purchasePack } from './payments.js';
 import { UPGRADES, maxLevel, levelOf, nextCost } from './upgrades.js';
+import { SIZES, DEFAULT_SIZE } from './sizes.js';
 
 export const BOOSTS = [
   { id: 'headstart', icon: '🚀', name: 'Head Start', desc: 'Begin the run 150 m in, already up to speed', price: 15 },
@@ -33,7 +34,120 @@ function refreshChips() {
     if (countEl) countEl.textContent = `×${ctx.save.boosts[b.id] || 0}`;
   }
   refreshUpgrades();
+  refreshSizes();
+  refreshCrate();
   refreshArmRow();
+}
+
+// --- Ball sizes ------------------------------------------------------------
+
+function ownsSize(id) {
+  return id === DEFAULT_SIZE || (ctx.save.sizesOwned || []).includes(id);
+}
+
+function refreshSizes() {
+  for (const sz of SIZES) {
+    const card = $(`size-card-${sz.id}`);
+    if (!card) continue;
+    card.classList.toggle('selected', (ctx.save.size || DEFAULT_SIZE) === sz.id);
+    const btn = $(`size-buy-${sz.id}`);
+    if (!btn) continue;
+    if (ownsSize(sz.id)) {
+      btn.textContent = (ctx.save.size || DEFAULT_SIZE) === sz.id ? 'EQUIPPED' : 'EQUIP';
+      btn.disabled = (ctx.save.size || DEFAULT_SIZE) === sz.id;
+    } else {
+      btn.textContent = `● ${sz.price}`;
+      btn.disabled = false;
+    }
+  }
+}
+
+function tapSize(id) {
+  const sz = SIZES.find((x) => x.id === id);
+  if (!sz) return;
+  if (!ownsSize(id)) {
+    if ((ctx.save.coins || 0) < sz.price) {
+      ctx.sfxDeny();
+      ctx.showToast(`Need ${sz.price - (ctx.save.coins || 0)} more coins`);
+      refreshChips();
+      return;
+    }
+    ctx.save.coins -= sz.price;
+    ctx.save.sizesOwned = [...(ctx.save.sizesOwned || []), id];
+    ctx.sfxBuy();
+    ctx.showToast(`${sz.icon} ${sz.name} unlocked!`);
+  }
+  ctx.save.size = id;
+  ctx.persist();
+  ctx.showToast(`${sz.icon} Rolling as ${sz.name}`);
+  refreshChips();
+}
+
+function buildSizes() {
+  const list = $('size-list');
+  if (!list) return;
+  for (const sz of SIZES) {
+    const card = document.createElement('div');
+    card.className = 'boost-card size-card';
+    card.id = `size-card-${sz.id}`;
+    card.innerHTML =
+      `<div class="boost-icon">${sz.icon}</div>` +
+      `<div class="boost-info"><b>${sz.name}</b>` +
+      `<small>${sz.perk}</small>` +
+      `<small class="size-cost">Trade-off: ${sz.cost}</small></div>` +
+      `<div class="boost-buy"><button class="btn mini" id="size-buy-${sz.id}" data-size="${sz.id}"></button></div>`;
+    list.appendChild(card);
+  }
+  list.addEventListener('click', (e) => {
+    const id = e.target?.dataset?.size;
+    if (id) tapSize(id);
+  });
+}
+
+// --- Mystery crate ---------------------------------------------------------
+// Deliberately NOT a loot box: it always returns a cosmetic skin you do not
+// own, never a duplicate, and never a power ball (which would make a 150-coin
+// crate a cheaper route to a 1,200-coin ball). No randomised paid rewards.
+
+const CRATE_PRICE = 150;
+
+function cratePool() {
+  return BALLS.filter((b) => !b.perk && b.price > 0 && !ctx.save.owned.includes(b.id));
+}
+
+function refreshCrate() {
+  const btn = $('btn-crate');
+  if (!btn) return;
+  const left = cratePool().length;
+  btn.disabled = left === 0;
+  btn.textContent = left === 0
+    ? 'EVERY SKIN OWNED'
+    : `OPEN CRATE · ● ${CRATE_PRICE}`;
+  const note = $('crate-note');
+  if (note) {
+    note.textContent = left === 0
+      ? 'You already own every skin in the pool.'
+      : `Always a skin you don't own — ${left} left in the pool. Never a duplicate.`;
+  }
+}
+
+function openCrate() {
+  const pool = cratePool();
+  if (!pool.length) return;
+  if ((ctx.save.coins || 0) < CRATE_PRICE) {
+    ctx.sfxDeny();
+    ctx.showToast(`Need ${CRATE_PRICE - (ctx.save.coins || 0)} more coins`);
+    return;
+  }
+  const won = pool[Math.floor(Math.random() * pool.length)];
+  ctx.save.coins -= CRATE_PRICE;
+  ctx.save.owned.push(won.id);
+  ctx.save.ball = won.id;
+  ctx.setBall(won.id);
+  ctx.persist();
+  ctx.sfxBuy();
+  ctx.showToast(`🎁 ${won.name.split('—')[0].trim()}!`);
+  refreshChips();
 }
 
 // --- Permanent upgrades ----------------------------------------------------
@@ -265,13 +379,17 @@ export function initShop(context) {
   ctx.save.owned ||= ['sunset'];
   ctx.save.boosts ||= {};
   ctx.save.upgrades ||= {};
+  ctx.save.sizesOwned ||= [];
+  ctx.save.size ||= DEFAULT_SIZE;
   if (ctx.save.ball && !ctx.save.owned.includes(ctx.save.ball)) {
     ctx.save.owned.push(ctx.save.ball);   // grandfather pre-shop players
   }
   buildBallRows();
+  buildSizes();
   buildBoosts();
   buildUpgrades();
   buildCoinPacks();
+  $('btn-crate')?.addEventListener('click', openCrate);
   let shopReturn = 'start';
   const openShop = (from) => () => { shopReturn = from; ctx.showScreen('shop'); refreshChips(); };
   $('btn-shop').addEventListener('click', openShop('start'));

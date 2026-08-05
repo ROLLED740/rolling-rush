@@ -35,6 +35,9 @@ function mergeSaves(a, b) {
     owned: [...new Set([...(a.owned || []), ...(b.owned || [])])],
     boosts,
     upgrades,
+    // v18: unlocked ball sizes union the same way owned skins do.
+    sizesOwned: [...new Set([...(a.sizesOwned || []), ...(b.sizesOwned || [])])],
+    size: b.size || a.size,
   };
 }
 

@@ -225,6 +225,79 @@ const skull = faceBall('#f3f3ef', (g) => {
   for (let x = -12; x <= 12; x += 8) g.fillRect(x - 2, 20, 4, 8);              // teeth
 });
 
+// ---------------------------------------------------------------------------
+// v18 power balls — a gradient body with a glyph repeated around the equator,
+// so the power still reads at 46 px in the picker.
+// ---------------------------------------------------------------------------
+function powerBall(stops, drawGlyph, glyph = 'rgba(255,255,255,.93)') {
+  return () => {
+    const [c, g] = canvasCtx();
+    const grad = g.createLinearGradient(0, 0, 0, TEX_H);
+    stops.forEach((color, i) => grad.addColorStop(i / (stops.length - 1), color));
+    g.fillStyle = grad;
+    g.fillRect(0, 0, TEX_W, TEX_H);
+    for (let i = 0; i < 4; i++) {
+      g.save();
+      g.translate(TEX_W * (0.125 + i * 0.25), TEX_H * 0.5);
+      g.fillStyle = glyph; g.strokeStyle = glyph; g.lineWidth = 4; g.lineCap = 'round';
+      drawGlyph(g);
+      g.restore();
+    }
+    return c;
+  };
+}
+
+const pbTimewarp = powerBall(['#8ecae6', '#219ebc', '#023047'], (g) => {
+  g.lineWidth = 4; g.beginPath(); g.arc(0, 0, 20, 0, 7); g.stroke();
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -12); g.moveTo(0, 0); g.lineTo(9, 4); g.stroke();
+  g.beginPath(); g.arc(0, 0, 27, -0.9, 0.5); g.stroke();          // rewind sweep
+});
+const pbMagnet = powerBall(['#ff7b7b', '#d32f2f', '#4a0e0e'], (g) => {
+  g.lineWidth = 8; g.beginPath(); g.arc(0, 2, 15, Math.PI, 0); g.stroke();   // horseshoe
+  g.lineWidth = 8; g.beginPath(); g.moveTo(-15, 2); g.lineTo(-15, 14);
+  g.moveTo(15, 2); g.lineTo(15, 14); g.stroke();
+});
+const pbGhost = powerBall(['#e6e6fa', '#9a8cc7', '#3b2f5e'], (g) => {
+  g.beginPath(); g.arc(0, -4, 14, Math.PI, 0); g.lineTo(14, 16);
+  for (let x = 10; x >= -14; x -= 8) g.lineTo(x, x % 16 === 2 ? 9 : 16);
+  g.closePath(); g.fill();
+  g.fillStyle = '#3b2f5e'; g.beginPath(); g.arc(-5, -4, 3, 0, 7); g.arc(5, -4, 3, 0, 7); g.fill();
+});
+const pbDiamond = powerBall(['#b9f6ff', '#26c6da', '#00506b'], (g) => {
+  g.beginPath(); g.moveTo(0, -20); g.lineTo(16, -4); g.lineTo(0, 20); g.lineTo(-16, -4);
+  g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(0,60,80,.55)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(-16, -4); g.lineTo(16, -4); g.moveTo(0, -20); g.lineTo(0, 20); g.stroke();
+});
+const pbStorm = powerBall(['#fff59d', '#fbc02d', '#3e2723'], (g) => {
+  g.beginPath(); g.moveTo(4, -22); g.lineTo(-12, 4); g.lineTo(-1, 4);
+  g.lineTo(-5, 22); g.lineTo(13, -3); g.lineTo(2, -3); g.closePath(); g.fill();
+});
+const pbPortal = powerBall(['#ce93d8', '#7b1fa2', '#1a0033'], (g) => {
+  g.lineWidth = 3.5;
+  for (let r = 20; r > 4; r -= 6) { g.beginPath(); g.arc(0, 0, r, 0.4, 5.4); g.stroke(); }
+});
+const pbMidas = powerBall(['#ffe082', '#c9971a', '#5d3a00'], (g) => {
+  g.beginPath(); g.arc(0, 0, 18, 0, 7); g.fill();
+  g.fillStyle = '#5d3a00'; g.font = 'bold 24px sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('$', 0, 1);
+});
+const pbPrism = powerBall(['#ffffff', '#d7d7e8', '#5b5b7a'], (g) => {
+  const bands = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#8e24aa'];
+  g.lineWidth = 4;
+  bands.forEach((color, i) => {
+    g.strokeStyle = color;
+    g.beginPath(); g.arc(0, 14, 8 + i * 4, Math.PI, 0); g.stroke();
+  });
+});
+const pbVoid = powerBall(['#4a4a68', '#1b1b2b', '#000000'], (g) => {
+  g.fillStyle = '#000'; g.beginPath(); g.arc(0, 0, 15, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(180,140,255,.85)'; g.lineWidth = 3;
+  g.beginPath(); g.arc(0, 0, 21, 0, 7); g.stroke();
+  g.strokeStyle = 'rgba(120,90,200,.5)';
+  g.beginPath(); g.arc(0, 0, 26, 0, 7); g.stroke();
+});
+
 export const BALLS = [
   { id: 'sunset', name: 'Sunset', price: 0, make: gradientBall(['#ffd54f', '#ff7043', '#8e24aa']) },
   { id: 'ocean', name: 'Ocean', price: 30, make: gradientBall(['#4dd0e1', '#1976d2', '#0d2c6b']) },
@@ -253,6 +326,16 @@ export const BALLS = [
   // Premium perk balls
   { id: 'flame', name: 'Flame Ball — torches boulders (+5 coins each), every coin worth +1', price: 250, make: flame, perk: 'flame', roughness: 0.25 },
   { id: 'angel', name: 'Angel Ball — glides over holes', price: 400, make: angel, perk: 'wings', roughness: 0.3 },
+  // --- v18 power balls: each changes how a run is played, not how it looks ---
+  { id: 'pb-timewarp', name: '⏰ Timewarp Ball — rewinds 3 s after a fall, once per run', price: 600, make: pbTimewarp, perk: 'rewind', roughness: 0.2, metalness: 0.35 },
+  { id: 'pb-magnet', name: '🧲 Magnet Ball — pulls coins in from the neighbouring lanes', price: 450, make: pbMagnet, perk: 'magnet', roughness: 0.3, metalness: 0.3 },
+  { id: 'pb-ghost', name: '👻 Ghost Ball — phases through boulders for 5 s after a hit', price: 500, make: pbGhost, perk: 'ghost', roughness: 0.5 },
+  { id: 'pb-diamond', name: '💎 Diamond Ball — indestructible for the first 200 m', price: 550, make: pbDiamond, perk: 'diamond', roughness: 0.05, metalness: 0.5 },
+  { id: 'pb-storm', name: '⚡ Storm Ball — higher top speed and 1.5× coins', price: 700, make: pbStorm, perk: 'storm', roughness: 0.25, metalness: 0.4 },
+  { id: 'pb-portal', name: '🌀 Portal Ball — teleports past holes and gaps instead of falling', price: 650, make: pbPortal, perk: 'portal', roughness: 0.3, metalness: 0.35 },
+  { id: 'pb-midas', name: '🪙 Midas Ball — coins pay triple, but no shield can save you', price: 800, make: pbMidas, perk: 'midas', roughness: 0.15, metalness: 0.75 },
+  { id: 'pb-prism', name: '🌈 Prism Ball — every world mechanic disabled (no ice, no slip)', price: 900, make: pbPrism, perk: 'prism', roughness: 0.1, metalness: 0.25 },
+  { id: 'pb-void', name: '🕳️ Void Ball — holes close ahead of you; the track never gaps', price: 1200, make: pbVoid, perk: 'void', roughness: 0.4, metalness: 0.2 },
 ];
 
 // Small round chip image for the ball-picker UI.

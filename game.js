@@ -8,6 +8,7 @@ import { THEMES, matFor } from './themes.js';
 import { initShop, consumeArmedBoosts, refreshShop } from './shop.js';
 import { initCloud, cloudPush } from './cloud.js';
 import { UPGRADES, maxLevel, upgradeEffects } from './upgrades.js';
+import { sizeEffects } from './sizes.js';
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -17,8 +18,10 @@ const LANE_W = 2;                    // width of one lane
 const TRACK_W = LANES * LANE_W;      // total track width (x: -3..3)
 const SEG_LEN = 4;                   // length of one track segment (z)
 const SEG_AHEAD = 30;                // segments kept ahead of the ball
-const BALL_R = 0.42;
-const X_LIMIT = TRACK_W / 2 - BALL_R * 0.7;
+// Geometry is built once at the Standard radius; other sizes scale the mesh.
+const BASE_BALL_R = 0.42;
+let ballR = BASE_BALL_R;             // current size's radius, set per run
+let xLimit = TRACK_W / 2 - ballR * 0.7;
 
 const SPEED_START = 9;
 const SPEED_MAX = 24;
@@ -173,7 +176,7 @@ scene.add(trail);
 // Ball + skins
 // ---------------------------------------------------------------------------
 const ball = new THREE.Mesh(
-  new THREE.SphereGeometry(BALL_R, 28, 20),
+  new THREE.SphereGeometry(BASE_BALL_R, 28, 20),
   new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.05 }),
 );
 scene.add(ball);
@@ -264,6 +267,28 @@ const boostMat = new THREE.MeshLambertMaterial({ map: boostTex });
 const laneGeo = new THREE.BoxGeometry(LANE_W, 0.5, SEG_LEN);
 const railGeo = new THREE.BoxGeometry(0.3, 0.42, SEG_LEN);
 const padGeo = new THREE.BoxGeometry(1.7, 0.08, 2.6);
+// --- v18 obstacles, both gated on ball size --------------------------------
+// A low bar only the Marble fits under; a rock pile only the Boulder smashes.
+const BAR_CLEAR = 0.60;              // underside height: Marble (0.56) clears it
+const BAR_POST_H = 1.45;             // posts run well above the bar so it reads as a gate
+const barGeo = new THREE.BoxGeometry(LANE_W * 0.92, 0.18, 0.36);
+const barPostGeo = new THREE.BoxGeometry(0.14, BAR_POST_H, 0.14);
+// Red/white chevrons — nothing else on the track uses this palette, so a bar
+// is never mistaken for a plank lying flat.
+const barTex = makeTexture(64, 32, (g, w, h) => {
+  g.fillStyle = '#e53935';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = '#fff';
+  for (let x = -h; x < w + h; x += 22) {
+    g.save(); g.translate(x, 0);
+    g.beginPath(); g.moveTo(0, h); g.lineTo(9, h); g.lineTo(9 + h, 0); g.lineTo(h, 0);
+    g.closePath(); g.fill(); g.restore();
+  }
+});
+const barMat = new THREE.MeshLambertMaterial({ map: barTex });
+const barPostMat = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 });
+const rockGeo = new THREE.DodecahedronGeometry(0.46);
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x6d5a4a, roughness: 0.9, metalness: 0.05 });
 const boulderGeo = new THREE.SphereGeometry(0.55, 20, 14);
 const boulderMats = [0xb03a3a, 0x7d3c98, 0x2c3e50, 0xd35400, 0x148f77].map(
   (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.15 }),
@@ -307,7 +332,7 @@ function addCoin(group, coins, x, y, tier) {
 const rampLen = Math.hypot(SEG_LEN, RAMP_H);
 const rampGeo = new THREE.BoxGeometry(TRACK_W, 0.5, rampLen);
 // A thin torus stretched along its axis reads as a curled track ribbon.
-const loopGeo = new THREE.TorusGeometry(LOOP_R + BALL_R, 0.3, 10, 44);
+const loopGeo = new THREE.TorusGeometry(LOOP_R + BASE_BALL_R, 0.3, 10, 44);
 const loopMats = new Map();
 function loopMat(color) {
   if (!loopMats.has(color)) {
@@ -349,6 +374,9 @@ function spawnSegment(i) {
   }
   featureCooldown--;
 
+  // Void Ball: the track simply never opens up beneath you.
+  if (perk === 'void' && (type === 'holes' || type === 'gap')) type = 'safe';
+
   if (type === 'holes') {
     // Keep a reachable safe lane: it only ever shifts one lane per hazard.
     safeLane = Math.max(0, Math.min(LANES - 1, safeLane + (Math.floor(Math.random() * 3) - 1)));
@@ -385,7 +413,7 @@ function spawnSegment(i) {
     const torus = new THREE.Mesh(loopGeo, loopMat(theme.accent));
     torus.scale.z = 3;                 // ribbon just wider than the ball
     torus.rotation.y = Math.PI / 2;
-    torus.position.y = LOOP_R + BALL_R;
+    torus.position.y = LOOP_R + BASE_BALL_R;
     group.add(torus);
   }
 
@@ -406,6 +434,45 @@ function spawnSegment(i) {
     group.add(pad);
     pads.push({ x: (lane - 1) * LANE_W, hit: false });
   }
+  // Low bar: duck under it as a Marble, or change lane.
+  const bars = [];
+  if (type === 'safe' && (i - runStartSeg) * SEG_LEN > 90 && Math.random() < 0.07) {
+    const lane = Math.floor(Math.random() * LANES);
+    const x = (lane - 1) * LANE_W;
+    const bar = new THREE.Mesh(barGeo, barMat);
+    bar.position.set(x, BAR_CLEAR + 0.09, 0);
+    group.add(bar);
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(barPostGeo, barPostMat);
+      post.position.set(x + side * LANE_W * 0.44, BAR_POST_H / 2, 0);
+      group.add(post);
+    }
+    // A second bar up at head height completes the frame; it is purely visual
+    // (well above every ball) and sells "duck under the low one".
+    const topBar = new THREE.Mesh(barGeo, barMat);
+    topBar.position.set(x, BAR_POST_H - 0.09, 0);
+    group.add(topBar);
+    bars.push({ x });
+  }
+
+  // Rock pile: a Boulder ball goes straight through, everyone else dodges.
+  const rocks = [];
+  if (!bars.length && type === 'safe' && (i - runStartSeg) * SEG_LEN > 110 && Math.random() < 0.07) {
+    const lane = Math.floor(Math.random() * LANES);
+    const x = (lane - 1) * LANE_W;
+    const pile = new THREE.Group();
+    for (let r = 0; r < 4; r++) {
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      rock.scale.setScalar(0.6 + Math.random() * 0.5);
+      rock.position.set((Math.random() - 0.5) * 0.7, 0.15 + r * 0.28, (Math.random() - 0.5) * 0.5);
+      rock.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      pile.add(rock);
+    }
+    pile.position.set(x, 0, 0);
+    group.add(pile);
+    rocks.push({ x, mesh: pile, alive: true });
+  }
+
   if (type === 'safe' && (i - runStartSeg) * SEG_LEN > 120 && Math.random() < 0.08) {
     const boulder = new THREE.Mesh(boulderGeo, boulderMats[Math.floor(Math.random() * boulderMats.length)]);
     const s = 0.85 + Math.random() * 0.5;
@@ -445,18 +512,20 @@ function spawnSegment(i) {
       addCoin(group, coins, 0, 2.5, COIN_TIERS.gem);
     } else if (type === 'loop') {
       // Re-parked onto the loop's apex the moment the ball enters it.
-      addCoin(group, coins, 0, BALL_R + LOOP_R * 2, COIN_TIERS.gem);
+      addCoin(group, coins, 0, BASE_BALL_R + LOOP_R * 2, COIN_TIERS.gem);
     }
   }
 
   scene.add(group);
-  segments.set(i, { type, group, holes, coins, pads, loopDone: false });
+  segments.set(i, { type, group, holes, coins, pads, bars, rocks, loopDone: false });
 }
 
 function ensureTrack(currentIndex) {
   while (genIndex < currentIndex + SEG_AHEAD) spawnSegment(genIndex++);
+  // The Timewarp ball rewinds ~3 s, so its trail of segments has to survive.
+  const keepBehind = perk === 'rewind' ? 18 : 3;
   for (const [i, seg] of segments) {
-    if (i < currentIndex - 3) {
+    if (i < currentIndex - keepBehind) {
       scene.remove(seg.group);
       segments.delete(i);
     }
@@ -516,7 +585,7 @@ const S = { MENU: 0, PLAYING: 1, OVER: 2, PAUSED: 3, REVIVE: 4 };
 let state = S.MENU;
 let stateBeforePause = S.MENU;
 let speed = SPEED_START;
-let ballX = 0, ballZ = 0, ballY = BALL_R, velY = 0;
+let ballX = 0, ballZ = 0, ballY = ballR, velY = 0;
 let slipX = 0;              // actual lateral pos; lags ballX on icy terrain
 let grounded = true;
 let fellSfx = false;
@@ -527,7 +596,13 @@ let coinsRun = 0;
 let coinValue = 1;          // 2 with the Coin Doubler boost
 let shieldCharges = 0;
 let graceTimer = 0;         // brief invulnerability after a shield/revive respawn
-let perk = '';              // equipped ball's perk: '', 'flame', 'wings'
+let perk = '';              // equipped ball's perk (see balls.js)
+let sizeFx = sizeEffects({});   // ball-size effects, refreshed each run
+let speedMax = SPEED_MAX;       // Storm ball raises the ceiling
+let ghostTimer = 0;             // Ghost ball: seconds of phasing left
+let rewindUsed = false;         // Timewarp ball: one rewind per run
+let rewindBuf = [];             // ~3 s of state snapshots for the rewind
+let rewindClock = 0;
 let slowmoTimer = 0;        // seconds of slow-motion remaining (Slow-Mo boost)
 let save = { best: 0, coins: 0, ball: BALLS[0].id };
 
@@ -581,7 +656,20 @@ function startRun() {
   // Permanent upgrades are re-read here so a purchase made on the game-over
   // screen takes effect on the very next run.
   up = upgradeEffects(save);
-  magnetRadius = up.magnetRadius;
+  // Ball size drives the physics radius, steering weight and pickup reach.
+  sizeFx = sizeEffects(save);
+  ballR = sizeFx.radius;
+  xLimit = TRACK_W / 2 - ballR * 0.7;
+  ball.scale.setScalar(ballR / BASE_BALL_R);
+  wings.scale.setScalar(ballR / BASE_BALL_R);
+
+  speedMax = SPEED_MAX + (perk === 'storm' ? 6 : 0);
+  ghostTimer = 0;
+  rewindUsed = false;
+  rewindBuf = [];
+  rewindClock = 0;
+  // Magnet Ball grants a magnet on its own; it never weakens the upgrade.
+  magnetRadius = Math.max(up.magnetRadius, perk === 'magnet' ? 2.8 : 0);
   boostSeconds = BOOST_BASE + up.boostBonus;
   revivesThisRun = 0;
   graceTimer = 0;
@@ -589,14 +677,17 @@ function startRun() {
   const adminDist = ADMIN ? (adminStartLevel - 1) * LEVEL_LEN : 0;
   // The Running Start upgrade stacks on top of the consumable Head Start boost.
   const startDist = DEV_START + adminDist + (boosts.headstart ? 150 : 0) + up.runStartM;
-  coinValue = (boosts.doubler ? 2 : 1) + (perk === 'flame' ? 1 : 0);
-  shieldCharges = (boosts.shield ? 1 : 0) + up.shieldSlots;
+  coinValue = ((boosts.doubler ? 2 : 1) + (perk === 'flame' ? 1 : 0))
+    * (perk === 'storm' ? 1.5 : 1)
+    * (perk === 'midas' ? 3 : 1);
+  // Midas trades every safety net for the triple payout.
+  shieldCharges = perk === 'midas' ? 0 : (boosts.shield ? 1 : 0) + up.shieldSlots;
   slowmoTimer = boosts.slowmo ? 8 : 0;
   ballZ = -startDist;
-  ballX = 0; slipX = 0; ballY = BALL_R; velY = 0;
+  ballX = 0; slipX = 0; ballY = ballR; velY = 0;
   grounded = true; fellSfx = false; loop = null;
   throttle = 0; boostTimer = 0;
-  speed = Math.min(SPEED_MAX, SPEED_START + Math.min(startDist / 60, 5));
+  speed = Math.min(speedMax, SPEED_START + Math.min(startDist / 60, 5));
   coinsRun = 0;
   lastSegIndex = Math.floor(-ballZ / SEG_LEN);
   ball.rotation.set(0, 0, 0);
@@ -642,7 +733,7 @@ function respawnOnSafeGround() {
   }
   ballZ = segmentCenterZ(idx);
   ballX = 0; slipX = 0;
-  ballY = BALL_R + 3;
+  ballY = ballR + 3;
   velY = 0;
   grounded = false;
   fellSfx = false;
@@ -751,7 +842,7 @@ window.addEventListener('pointermove', (e) => {
   const dy = e.clientY - lastPointerY;
   lastPointerX = e.clientX;
   lastPointerY = e.clientY;
-  ballX += dx * (9 / Math.min(window.innerWidth, 900));
+  ballX += dx * (9 / Math.min(window.innerWidth, 900)) * sizeFx.steer;
   // Push forward to speed up, pull back to brake (Going Balls-style).
   throttle = Math.max(-0.6, Math.min(1, throttle - dy * (4 / Math.min(window.innerHeight, 900))));
 });
@@ -815,7 +906,39 @@ function parkGemsOnArc(fromSeg, y0, vy, vz) {
   }
 }
 
+// Timewarp ball: drop back to where the ball was ~3 s ago, on the original
+// track (ensureTrack keeps the extra segments alive for exactly this).
+function rewindRun() {
+  rewindUsed = true;
+  const past = rewindBuf[0];
+  rewindBuf = [];
+  rewindClock = 0;
+  ballZ = past.z;
+  ballX = past.x; slipX = past.x;
+  speed = past.speed;
+  coinsRun = past.coins;
+  ballY = ballR + 2;
+  velY = 0;
+  grounded = false;
+  fellSfx = false;
+  loop = null;
+  lastSegIndex = Math.floor(-ballZ / SEG_LEN);
+  ensureTrack(lastSegIndex);
+  for (let i = boulders.length - 1; i >= 0; i--) {
+    if (Math.abs(boulders[i].position.z - ballZ) < 20) {
+      scene.remove(boulders[i]);
+      boulders.splice(i, 1);
+    }
+  }
+  graceTimer = REVIVE_GRACE;
+  showToast('⏰ Rewound 3 seconds!');
+  sfxGo();
+}
+
 function die() {
+  // Diamond ball simply cannot be killed over the opening 200 m.
+  if (perk === 'diamond' && -ballZ < 200) { respawnOnSafeGround(); showToast('💎 Indestructible'); return; }
+  if (perk === 'rewind' && !rewindUsed && rewindBuf.length) { rewindRun(); return; }
   if (shieldCharges > 0) shieldRespawn();
   else if (canRevive()) offerRevive();
   else endRun();
@@ -837,6 +960,9 @@ function demoSteer(segIndex, dt) {
       s.holes.forEach((h, lane) => { if (h) hazard.add(lane); });
       if (i <= segIndex + 2) break;      // dodge the near threat first
     }
+    // v18 obstacles are lane hazards too, or the attract mode walks into them.
+    for (const bar of s.bars) hazard.add(laneAt(bar.x));
+    for (const pile of s.rocks) if (pile.alive) hazard.add(laneAt(pile.x));
     if (coinLane < 0 && s.coins.some((c) => c.visible)) {
       coinLane = laneAt(s.coins[0].position.x);
     }
@@ -865,6 +991,17 @@ function step(dt) {
 
   // Post-respawn invulnerability (shield or continue) ticks down in real time.
   if (state === S.PLAYING && graceTimer > 0) graceTimer = Math.max(0, graceTimer - dt);
+  if (state === S.PLAYING && ghostTimer > 0) ghostTimer = Math.max(0, ghostTimer - dt);
+
+  // Timewarp ball: keep ~3 s of breadcrumbs to rewind to.
+  if (state === S.PLAYING && perk === 'rewind' && !loop) {
+    rewindClock += dt;
+    if (rewindClock >= 0.25) {
+      rewindClock = 0;
+      rewindBuf.push({ z: ballZ, x: ballX, speed, coins: coinsRun });
+      if (rewindBuf.length > 13) rewindBuf.shift();
+    }
+  }
 
   // Slow-Mo boost: stretch simulated time for the opening seconds.
   if (state === S.PLAYING && slowmoTimer > 0) slowmoTimer = Math.max(0, slowmoTimer - dt);
@@ -877,22 +1014,22 @@ function step(dt) {
       loop.theta += w * dt;
       ballX += (0 - ballX) * Math.min(1, dt * 8);
       slipX = ballX;
-      ballY = BALL_R + LOOP_R * (1 - Math.cos(loop.theta));
+      ballY = ballR + LOOP_R * (1 - Math.cos(loop.theta));
       ballZ = loop.z0 - LOOP_R * Math.sin(loop.theta);
-      ball.rotation.x -= (w * LOOP_R * dt) / BALL_R;
+      ball.rotation.x -= (w * LOOP_R * dt) / ballR;
       if (loop.theta >= Math.PI * 2) {
         ballZ = loop.z0;
-        ballY = BALL_R;
+        ballY = ballR;
         grounded = true;
         loop = null;
-        speed = Math.min(SPEED_MAX, speed + 1.5);
+        speed = Math.min(speedMax, speed + 1.5);
       }
     } else {
       ballZ -= effSpeed * dt;
-      speed = Math.min(SPEED_MAX, speed + SPEED_RAMP * dt);
+      speed = Math.min(speedMax, speed + SPEED_RAMP * dt);
       if (grounded || ballY > 0) {   // steer on the ground and mid-jump, not once fallen in
-        ballX += keyDir * 7 * dt;
-        ballX = Math.max(-X_LIMIT, Math.min(X_LIMIT, ballX));
+        ballX += keyDir * 7 * dt * sizeFx.steer;
+        ballX = Math.max(-xLimit, Math.min(xLimit, ballX));
       }
       if (DEMO && grounded) demoSteer(Math.floor(-ballZ / SEG_LEN), dt);
 
@@ -903,7 +1040,7 @@ function step(dt) {
 
       // Icy worlds (Snow/Ice): the ball's real position lags your steering,
       // so control feels slippery. Elsewhere slipX tracks input exactly.
-      const slip = themeForSegment(segIndex).slippery;
+      const slip = perk === 'prism' ? 0 : themeForSegment(segIndex).slippery;
       if (slip && grounded) slipX += (ballX - slipX) * Math.min(1, dt * slip * 12);
       else slipX = ballX;
 
@@ -911,7 +1048,7 @@ function step(dt) {
       if (segIndex !== lastSegIndex) {
         const prev = segments.get(lastSegIndex);
         if (prev && prev.type === 'ramp' && grounded) {
-          speed = Math.min(SPEED_MAX, speed + 3);
+          speed = Math.min(speedMax, speed + 3);
           const range = 2 * SEG_LEN + 3;
           velY = Math.max(7, Math.min(17, (GRAVITY * range) / (2 * Math.max(effSpeed, speed))));
           parkGemsOnArc(segIndex, ballY, velY, effSpeed);
@@ -921,12 +1058,19 @@ function step(dt) {
         lastSegIndex = segIndex;
       }
 
-      let restY = BALL_R;
+      let restY = ballR;
       let supported = true;
       if (seg) {
         if (seg.type === 'gap') supported = false;
-        else if (seg.type === 'ramp') restY = BALL_R + RAMP_H * frac;
-        else supported = perk === 'wings' || !seg.holes[laneAt(slipX)]; // angel ball glides over holes
+        else if (seg.type === 'ramp') restY = ballR + RAMP_H * frac;
+        else {
+          const lane = laneAt(slipX);
+          supported = perk === 'wings' || !seg.holes[lane];   // angel glides over holes
+          // A Boulder is too wide for a lone ledge: both neighbours gone means
+          // there is nothing left to actually sit on.
+          if (supported && sizeFx.tooWideForSingleLane
+              && seg.holes[lane - 1] === true && seg.holes[lane + 1] === true) supported = false;
+        }
       }
 
       // Enter a loop.
@@ -937,13 +1081,16 @@ function step(dt) {
         for (const coin of seg.coins) {
           if (!coin.userData.gem) continue;
           coin.position.z = ballZ - seg.group.position.z;
-          coin.position.y = BALL_R + LOOP_R * 2;
+          coin.position.y = ballR + LOOP_R * 2;
         }
         grounded = false;
         sfxJump();
       } else if (grounded) {
         if (supported) {
           ballY = restY;              // roll along the floor / up the ramp
+        } else if (perk === 'portal') {
+          respawnOnSafeGround();      // Portal ball skips the hole entirely
+          showToast('🌀 Portal!');
         } else {
           grounded = false;           // rolled into a hole or gap
           velY = 0;
@@ -978,6 +1125,37 @@ function step(dt) {
         }
       }
 
+      // Low bars: clearance is decided purely by how tall the ball is.
+      if (seg && seg.bars.length && graceTimer <= 0 && ghostTimer <= 0) {
+        const wz = seg.group.position.z;
+        for (const bar of seg.bars) {
+          if (Math.abs(bar.x - slipX) < LANE_W * 0.52 && Math.abs(wz - ballZ) < 0.6
+              && ballY + ballR > BAR_CLEAR && ballY - ballR < BAR_CLEAR + 0.24) {
+            die();
+            break;
+          }
+        }
+      }
+
+      // Rock piles: the Boulder ball plows through, everything else stops dead.
+      if (seg && seg.rocks.length && graceTimer <= 0) {
+        const wz = seg.group.position.z;
+        for (const pile of seg.rocks) {
+          if (!pile.alive) continue;
+          if (Math.abs(pile.x - slipX) < 0.95 && Math.abs(wz - ballZ) < 0.9 && ballY < 1.5) {
+            if (sizeFx.smashes) {
+              pile.alive = false;
+              seg.group.remove(pile.mesh);
+              coinsRun += 8;
+              sfxLevel();
+            } else if (ghostTimer <= 0) {
+              die();
+            }
+            break;
+          }
+        }
+      }
+
       // Rolling boulders: dodge them or die.
       for (let i = boulders.length - 1; i >= 0; i--) {
         const b = boulders[i];
@@ -989,12 +1167,18 @@ function step(dt) {
           continue;
         }
         const dx = b.position.x - slipX, dz = b.position.z - ballZ;
-        if (state === S.PLAYING && graceTimer <= 0 && ballY < 1.4 && dx * dx + dz * dz < 0.9 * 0.9) {
-          if (perk === 'flame') {          // flame ball torches boulders
+        if (state === S.PLAYING && graceTimer <= 0 && ghostTimer <= 0
+            && ballY < 1.4 && dx * dx + dz * dz < 0.9 * 0.9) {
+          if (perk === 'flame' || sizeFx.smashes) {   // torched, or simply flattened
             scene.remove(b);
             boulders.splice(i, 1);
-            coinsRun += 5;
+            coinsRun += perk === 'flame' ? 5 : 8;
             sfxLevel();
+            continue;
+          }
+          if (perk === 'ghost') {                     // phase instead of dying
+            ghostTimer = 5;
+            showToast('👻 Phasing — 5s');
             continue;
           }
           die();
@@ -1002,7 +1186,7 @@ function step(dt) {
         }
       }
 
-      ball.rotation.x -= (effSpeed * dt) / BALL_R;
+      ball.rotation.x -= (effSpeed * dt) / ballR;
 
       // Coin pickups near the ball. The magnet upgrade reaches further than one
       // segment, so the scan window widens with it.
@@ -1033,10 +1217,10 @@ function step(dt) {
           // True 3D distance: coins now sit at varying heights, so the old
           // "ball must be near ground level" test would miss every gem.
           const dy = coin.position.y - ballY;
-          const reach = coin.userData.gem ? 1.15 : 0.85;
+          const reach = (coin.userData.gem ? 1.15 : 0.85) * sizeFx.pickup;
           if (dx * dx + dy * dy + dz * dz < reach * reach) {
             coin.visible = false;
-            const worth = coin.userData.value * coinValue;
+            const worth = Math.round(coin.userData.value * coinValue);
             coinsRun += worth;
             if (coin.userData.gem) { sfxGem(); showToast(`💎 +${worth}`); }
             else if (coin.userData.value > 1) sfxSilver();
@@ -1087,14 +1271,26 @@ function step(dt) {
 
   camX += (slipX * 0.55 - camX) * Math.min(1, dt * 5);
   camZ += (ballZ + 7 - camZ) * Math.min(1, dt * 6);
-  const lift = Math.max(0, ballY - BALL_R);
+  const lift = Math.max(0, ballY - ballR);
   camera.position.set(camX, 3.4 + lift * 0.35, camZ);
   camera.lookAt(camX * 0.9, 0.6 + lift * 0.55, camZ - 12);
 
   renderer.render(scene, camera);
 
   if (PARAMS.has('debug')) {
+    const segTypes = {};
+    let barCount = 0, rockCount = 0, nearestBar = 1e9, nearestRock = 1e9;
+    for (const sg of segments.values()) {
+      segTypes[sg.type] = (segTypes[sg.type] || 0) + 1;
+      barCount += sg.bars.length;
+      rockCount += sg.rocks.length;
+      const d = sg.group.position.z - ballZ;      // negative = ahead of the ball
+      if (sg.bars.length) nearestBar = Math.min(nearestBar, Math.abs(d));
+      if (sg.rocks.length) nearestRock = Math.min(nearestRock, Math.abs(d));
+    }
     window.__rr = {
+      perk, sizeId: sizeFx.id, ballR, speedMax, ghostTimer, rewindUsed,
+      segTypes, barCount, rockCount, nearestBar, nearestRock,
       ballX, ballY, ballZ, camX, camZ,
       camPos: camera.position.toArray(),
       aspect: camera.aspect,
